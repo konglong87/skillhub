@@ -8,6 +8,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.core.OAuth2ParameterNames;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -30,13 +36,25 @@ class OAuth2AuthorizationRequestResolverTest {
                 .scope("read:user")
                 .clientName("GitHub")
                 .build();
+        ClientRegistration dingtalk = ClientRegistration.withRegistrationId("dingtalk")
+                .clientId("client")
+                .clientSecret("secret")
+                .authorizationUri("https://login.dingtalk.com/oauth2/auth")
+                .tokenUri("https://api.dingtalk.com/v1.0/oauth2/userAccessToken")
+                .redirectUri("{baseUrl}/login/oauth2/code/{registrationId}")
+                .userInfoUri("https://api.dingtalk.com/v1.0/contact/users/me")
+                .userNameAttributeName("openId")
+                .authorizationGrantType(org.springframework.security.oauth2.core.AuthorizationGrantType.AUTHORIZATION_CODE)
+                .scope("corpid", "Contact.User.Read")
+                .clientName("DingTalk")
+                .build();
         OAuthLoginFlowService oauthLoginFlowService = new OAuthLoginFlowService(
                 java.util.List.of(),
                 mock(AccessPolicy.class),
                 mock(IdentityBindingService.class)
         );
         resolver = new SkillHubOAuth2AuthorizationRequestResolver(
-                new InMemoryClientRegistrationRepository(github),
+                new InMemoryClientRegistrationRepository(github, dingtalk),
                 oauthLoginFlowService
         );
     }
@@ -64,5 +82,22 @@ class OAuth2AuthorizationRequestResolverTest {
         HttpSession session = request.getSession(false);
         assertThat(session).isNotNull();
         assertThat(session.getAttribute(OAuthLoginRedirectSupport.SESSION_RETURN_TO_ATTRIBUTE)).isNull();
+    }
+
+    @Test
+    void resolve_dingTalkAddsOpenIdOnlyToOutboundScope() {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/oauth2/authorization/dingtalk");
+
+        OAuth2AuthorizationRequest result = resolver.resolve(request, "dingtalk");
+
+        assertThat(result.getScopes())
+                .containsExactlyInAnyOrder("corpid", "Contact.User.Read")
+                .doesNotContain("openid");
+        String outboundScope = UriComponentsBuilder.fromUriString(result.getAuthorizationRequestUri())
+                .build()
+                .getQueryParams()
+                .getFirst(OAuth2ParameterNames.SCOPE);
+        assertThat(URLDecoder.decode(outboundScope, StandardCharsets.UTF_8))
+                .isEqualTo("openid corpid Contact.User.Read");
     }
 }
